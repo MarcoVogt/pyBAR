@@ -107,8 +107,14 @@ class RunBase():
     def run(self, run_conf, run_number=None):
         self._init(run_conf, run_number)
         try:
-            with self._run():
-                self.do_run()
+            if 'number_of_fes' in self.conf and self.conf['number_of_fes'] > 1:
+                for self.fe_number in range(1, self.conf['number_of_fes'] + 1):
+                    with self._run():
+                        self.do_run()
+            else:
+                self.fe_number = 1
+                with self._run():
+                        self.do_run()
         except RunAborted as e:
             self._run_status = run_status.aborted
             logging.warning('Run %s was aborted: %s', self.run_number, e)
@@ -350,7 +356,7 @@ class RunManager(object):
 
     def init(self, conf):
         if isinstance(conf, basestring):
-            self._conf_path = conf
+            self._conf_path = conf  # saving path '../configuration.yaml' to the _conf_path
         elif isinstance(conf, file):
             self._conf_path = conf.name
         else:
@@ -366,7 +372,7 @@ class RunManager(object):
                 # working_dir is absolute path, keep that
                 pass
         elif self._conf_path:
-            self.conf['working_dir'] = os.path.dirname(self._conf_path)
+            self.conf['working_dir'] = os.path.dirname(self._conf_path)  # if working_dir path is not given, use path of configuration.yaml
         else:
             raise ValueError('Cannot deduce working directory from configuration')
 
@@ -415,7 +421,7 @@ class RunManager(object):
             if run.__class__.__name__ in self.conf:
                 run = run(conf=self.conf, run_conf=self.conf[run.__class__.__name__])
             else:
-                run = run(conf=self.conf)
+                run = run(conf=self.conf)  # Adding configuration to the run object (e.g. to the AnalogScan)
 
         run_conf = self.open_conf(run_conf)
         if run.__class__.__name__ in run_conf:
@@ -433,8 +439,8 @@ class RunManager(object):
 
             return run_run_in_thread()
         else:
-            self._current_run = run
-            status = run.run(run_conf=run_conf)
+            self._current_run = run  # e.g. AnalogScan
+            status = run.run(run_conf=run_conf)  # run method of the RunBase, inherited by the fei4_run_base, inherited by e.g. # e.g. AnalogScan = AnalogScan.run
             return status
 
     def run_primlist(self, primlist, skip_remaining=False):

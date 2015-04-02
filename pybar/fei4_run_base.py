@@ -13,6 +13,7 @@ import abc
 import ast
 import inspect
 from basil.dut import Dut
+from pybar.daq import readout_utils
 
 from pybar.run_manager import RunBase, RunAborted, RunStopped
 from pybar.fei4.register import FEI4Register
@@ -63,9 +64,9 @@ class Fei4RunBase(RunBase):
     @property
     def output_filename(self):
         if self.module_id:
-            return os.path.join(self.working_dir, str(self.run_number) + "_" + self.module_id + "_" + self.run_id)
+            return os.path.join(self.working_dir, str(self.run_number) + "_" + self.module_id + "_" + self.run_id + "_fe" + str(self.fe_number))
         else:
-            return os.path.join(self.working_dir, str(self.run_number) + "_" + self.run_id)
+            return os.path.join(self.working_dir, str(self.run_number) + "_" + self.run_id + "_fe" + str(self.fe_number))
 
     @property
     def module_id(self):
@@ -75,6 +76,24 @@ class Fei4RunBase(RunBase):
             return re.sub(r"\s+", '_', module_id).lower()
         else:
             return None
+
+#     @contextmanager
+#     def _run(self):
+#         if 'number_of_fes' in self.conf and self.conf['number_of_fes']:
+#             for self.fe_number in range(self.conf['number_of_fes']):
+#                 try:
+#                     self.pre_run()
+#                     yield
+#                     self.post_run()
+#                 finally:
+#                     self.cleanup_run()
+#         else:
+#             try:
+#                 self.pre_run()
+#                 yield
+#                 self.post_run()
+#             finally:
+#                 self.cleanup_run()
 
     def init_dut(self):
         if self.dut.name == 'mio':
@@ -132,52 +151,100 @@ class Fei4RunBase(RunBase):
             logging.warning('Omit initialization of DUT %s', self.dut.name)
 
     def init_fe(self):
-        if 'fe_configuration' in self.conf:
-            last_configuration = self._get_configuration()
-            # init config, a number <=0 will also do the initialization (run 0 does not exists)
-            if (not self.conf['fe_configuration'] and not last_configuration) or (isinstance(self.conf['fe_configuration'], (int, long)) and self.conf['fe_configuration'] <= 0):
-                if 'chip_address' in self.conf and self.conf['chip_address']:
-                    chip_address = self.conf['chip_address']
-                    broadcast = False
+        if 'number_of_fes' in self.conf and self.conf['number_of_fes'] > 1:
+            if 'multiple_fes_configuration' in self.conf:
+                last_configuration = self._get_configuration()  # will get the latest valid configuration from the runs
+                # init config, a number <=0 will also do the initialization (run 0 does not exist)
+                if (not self.conf['multiple_fes_configuration'][self.fe_number] and not last_configuration) or (isinstance(self.conf['multiple_fes_configuration'][self.fe_number], (int, long)) and self.conf['multiple_fes_configuration'][self.fe_number] <= 0):  # no valid runs yet and no valid run number for FE configuration file indicated
+                    if 'chip_address' in self.conf and self.conf['chip_address']:
+                        chip_address = self.conf['chip_address']
+                        broadcast = False
+                    else:
+                        chip_address = 0
+                        broadcast = True
+                    if 'fe_flavor' in self.conf and self.conf['fe_flavor']:
+                        self._conf['fe_configuration'] = FEI4Register(fe_type=self.conf['fe_flavor'], chip_address=chip_address, broadcast=broadcast)
+                    else:
+                        raise ValueError('No fe_flavor given')
+                # use existing config
+                elif not self.conf['multiple_fes_configuration'][self.fe_number] and last_configuration:  # executes when latest valid configuration exists and run number is not indicated in fe_configuration
+                    self._conf['fe_configuration'] = FEI4Register(configuration_file=last_configuration)
+                # path
+                elif isinstance(self.conf['multiple_fes_configuration'][self.fe_number], basestring):
+                    if os.path.isabs(self.conf['multiple_fes_configuration'][self.fe_number]):
+                        fe_configuration = self.conf['multiple_fes_configuration'][self.fe_number]
+                    else:
+                        fe_configuration = os.path.join(self.conf['working_dir'], self.conf['multiple_fes_configuration'][self.fe_number])
+                    self._conf['fe_configuration'] = FEI4Register(configuration_file=fe_configuration)
+                # run number
+                elif isinstance(self.conf['multiple_fes_configuration'][self.fe_number], (int, long)) and self.conf['multiple_fes_configuration'][self.fe_number] > 0:
+                    self._conf['fe_configuration'] = FEI4Register(configuration_file=self._get_configuration(self.conf['multiple_fes_configuration'][self.fe_number]))
+                # assume fe_configuration already initialized
+                elif not isinstance(self.conf['multiple_fes_configuration'][self.fe_number], FEI4Register):
+                    raise ValueError('No valid fe_configuration given')
+                # init register utils
+                self.register_utils = FEI4RegisterUtils(self.dut, self.register)
+                # reset and configuration
+                self.register_utils.global_reset()
+                self.register_utils.configure_all()
+                if is_fe_ready(self):
+                    reset_service_records = False
                 else:
-                    chip_address = 0
-                    broadcast = True
-                if 'fe_flavor' in self.conf and self.conf['fe_flavor']:
-                    self._conf['fe_configuration'] = FEI4Register(fe_type=self.conf['fe_flavor'], chip_address=chip_address, broadcast=broadcast)
-                else:
-                    raise ValueError('No fe_flavor given')
-            # use existing config
-            elif not self.conf['fe_configuration'] and last_configuration:
-                self._conf['fe_configuration'] = FEI4Register(configuration_file=last_configuration)
-            # path
-            elif isinstance(self.conf['fe_configuration'], basestring):
-                if os.path.isabs(self.conf['fe_configuration']):
-                    fe_configuration = self.conf['fe_configuration']
-                else:
-                    fe_configuration = os.path.join(self.conf['working_dir'], self.conf['fe_configuration'])
-                self._conf['fe_configuration'] = FEI4Register(configuration_file=fe_configuration)
-            # run number
-            elif isinstance(self.conf['fe_configuration'], (int, long)) and self.conf['fe_configuration'] > 0:
-                self._conf['fe_configuration'] = FEI4Register(configuration_file=self._get_configuration(self.conf['fe_configuration']))
-            # assume fe_configuration already initialized
-            elif not isinstance(self.conf['fe_configuration'], FEI4Register):
-                raise ValueError('No valid fe_configuration given')
-            # init register utils
-            self.register_utils = FEI4RegisterUtils(self.dut, self.register)
-            # reset and configuration
-            self.register_utils.global_reset()
-            self.register_utils.configure_all()
-            if is_fe_ready(self):
-                reset_service_records = False
+                    reset_service_records = True
+                self.register_utils.reset_bunch_counter()
+                self.register_utils.reset_event_counter()
+                if reset_service_records:
+                    # resetting service records must be done once after power up
+                    self.register_utils.reset_service_records()
             else:
-                reset_service_records = True
-            self.register_utils.reset_bunch_counter()
-            self.register_utils.reset_event_counter()
-            if reset_service_records:
-                # resetting service records must be done once after power up
-                self.register_utils.reset_service_records()
+                pass  # no multiple_fes_configuration
         else:
-            pass  # no fe_configuration
+            if 'fe_configuration' in self.conf:
+                last_configuration = self._get_configuration()  # will get the latest valid configuration from the runs
+                # init config, a number <=0 will also do the initialization (run 0 does not exist)
+                if (not self.conf['fe_configuration'] and not last_configuration) or (isinstance(self.conf['fe_configuration'], (int, long)) and self.conf['fe_configuration'] <= 0):  # no valid runs yet and no run number for FE configuration file indicated
+                    if 'chip_address' in self.conf and self.conf['chip_address']:
+                        chip_address = self.conf['chip_address']
+                        broadcast = False
+                    else:
+                        chip_address = 0
+                        broadcast = True
+                    if 'fe_flavor' in self.conf and self.conf['fe_flavor']:
+                        self._conf['fe_configuration'] = FEI4Register(fe_type=self.conf['fe_flavor'], chip_address=chip_address, broadcast=broadcast)
+                    else:
+                        raise ValueError('No fe_flavor given')
+                # use existing config
+                elif not self.conf['fe_configuration'] and last_configuration:  # executes when latest valid configuration exists and run number is not indicated in fe_configuration
+                    self._conf['fe_configuration'] = FEI4Register(configuration_file=last_configuration)
+                # path
+                elif isinstance(self.conf['fe_configuration'], basestring):
+                    if os.path.isabs(self.conf['fe_configuration']):
+                        fe_configuration = self.conf['fe_configuration']
+                    else:
+                        fe_configuration = os.path.join(self.conf['working_dir'], self.conf['fe_configuration'])
+                    self._conf['fe_configuration'] = FEI4Register(configuration_file=fe_configuration)
+                # run number
+                elif isinstance(self.conf['fe_configuration'], (int, long)) and self.conf['fe_configuration'] > 0:
+                    self._conf['fe_configuration'] = FEI4Register(configuration_file=self._get_configuration(self.conf['fe_configuration']))
+                # assume fe_configuration already initialized
+                elif not isinstance(self.conf['fe_configuration'], FEI4Register):
+                    raise ValueError('No valid fe_configuration given')
+                # init register utils
+                self.register_utils = FEI4RegisterUtils(self.dut, self.register)
+                # reset and configuration
+                self.register_utils.global_reset()
+                self.register_utils.configure_all()
+                if is_fe_ready(self):
+                    reset_service_records = False
+                else:
+                    reset_service_records = True
+                self.register_utils.reset_bunch_counter()
+                self.register_utils.reset_event_counter()
+                if reset_service_records:
+                    # resetting service records must be done once after power up
+                    self.register_utils.reset_service_records()
+            else:
+                pass  # no fe_configuration
 
     def pre_run(self):
         # sending data
@@ -212,7 +279,7 @@ class Fei4RunBase(RunBase):
                     dut = os.path.join(module_path, self.conf['dut'])
                 else:
                     raise ValueError('%s: dut file not found' % self.conf['dut'])
-                self._conf['dut'] = Dut(dut)
+                self._conf['dut'] = Dut(dut)  # creating a Dut object, passing path to dut_mio.yaml as a parameter
             else:
                 self._conf['dut'] = Dut(self.conf['dut'])
 
@@ -245,12 +312,15 @@ class Fei4RunBase(RunBase):
         else:
             pass  # do nothing, already initialized
         # FIFO readout
-        self.fifo_readout = FifoReadout(self.dut)
+        if 'number_of_fes' in self.conf and self.conf['number_of_fes'] > 1:
+            self.fifo_readout = FifoReadout(self.dut, self.fe_number)
+        else:
+            self.fifo_readout = FifoReadout(self.dut)
         # initialize the FE
         self.init_fe()
 
     def do_run(self):
-        with open_raw_data_file(filename=self.output_filename, mode='w', title=self.run_id, scan_parameters=self.scan_parameters._asdict(), socket_addr=self.socket_addr) as self.raw_data_file:
+        with open_raw_data_file(filename=self.output_filename, mode='w', title=self.run_id, scan_parameters=self.scan_parameters._asdict(), socket_addr=self.socket_addr) as self.raw_data_file:  # closes raw data file when exits with statement
             self.save_configuration_dict(self.raw_data_file.h5_file, 'conf', self.conf)
             self.save_configuration_dict(self.raw_data_file.h5_file, 'run_conf', self.run_conf)
 
@@ -309,6 +379,11 @@ class Fei4RunBase(RunBase):
     def handle_data(self, data):
         self.raw_data_file.append_item(data, scan_parameters=self.scan_parameters._asdict(), flush=False)
 
+#         list_data = list(data)
+#         list_data[0] = readout_utils.convert_data_array(list_data[0], filter_func = readout_utils.is_data_from_channel(self.fe_number))
+#         tuple_data = tuple(list_data)
+#         self.raw_data_file.append_item(tuple_data, scan_parameters=self.scan_parameters._asdict(), flush=False)
+
     def handle_err(self, exc):
         if self.reset_rx_on_error and isinstance(exc[1], (RxSyncError, EightbTenbError)):
             self.fifo_readout.print_readout_status()
@@ -322,8 +397,12 @@ class Fei4RunBase(RunBase):
             for root, _, files in os.walk(self.working_dir):
                 for cfgfile in files:
                     cfg_root, cfg_ext = os.path.splitext(cfgfile)
-                    if cfg_root.startswith(''.join([str(run_number), '_', self.module_id])) and cfg_ext.endswith(".cfg"):
-                        return os.path.join(root, cfgfile)
+                    if 'number_of_fes' in self.conf and self.conf['number_of_fes'] > 1:
+                        if cfg_root.startswith(''.join([str(run_number), '_', self.module_id])) and cfg_root.endswith(str(self.fe_number)) and cfg_ext.endswith(".cfg"):
+                            return os.path.join(root, cfgfile)
+                    else:
+                        if cfg_root.startswith(''.join([str(run_number), '_', self.module_id])) and cfg_ext.endswith(".cfg"):
+                            return os.path.join(root, cfgfile)
 
         if not run_number:
             run_numbers = sorted(self._get_run_numbers(status='FINISHED').iterkeys(), reverse=True)
