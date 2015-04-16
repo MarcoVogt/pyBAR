@@ -85,9 +85,8 @@ class ExtTriggerScan(Fei4RunBase):
 #                         if got_data:
                         self.progressbar.finish()
                         self.stop(msg='Trigger limit was reached: %i' % self.max_triggers)
-#                 print self.fifo_readout.data_words_per_second()
-#                 if (current_trigger_number % show_trigger_message_at < last_trigger_number % show_trigger_message_at):
-#                     logging.info('Collected triggers: %d', current_trigger_number)
+
+                    logging.info('Collected triggers: %d', triggers)
 
         logging.info('Total amount of triggers collected: %d', self.dut['tlu']['TRIGGER_COUNTER'])
 
@@ -109,7 +108,7 @@ class ExtTriggerScan(Fei4RunBase):
         if kwargs:
             self.set_scan_parameters(**kwargs)
         self.fifo_readout.start(reset_sram_fifo=False, clear_buffer=True, callback=self.handle_data, errback=self.handle_err, no_data_timeout=self.no_data_timeout)
-        self.dut['tdc_rx2']['ENABLE'] = self.enable_tdc
+#        self.dut['tdc_rx2']['ENABLE'] = self.enable_tdc
         self.dut['tlu'].RESET
         self.dut['tlu']['TRIGGER_MODE'] = self.trigger_mode
         self.dut['cmd']['EN_EXT_TRIGGER'] = True
@@ -127,7 +126,7 @@ class ExtTriggerScan(Fei4RunBase):
 
     def stop_readout(self):
         self.scan_timeout_timer.cancel()
-        self.dut['tdc_rx2']['ENABLE'] = False
+#        self.dut['tdc_rx2']['ENABLE'] = False
         self.dut['cmd']['EN_EXT_TRIGGER'] = False
         self.dut['tlu']['TRIGGER_MODE'] = 0
         self.fifo_readout.stop()
