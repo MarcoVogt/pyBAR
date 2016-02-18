@@ -11,6 +11,7 @@ from scan_ext_trigger_stop_mode import StopModeExtTriggerScan
 from scan_ext_trigger import ExtTriggerScan
 from scan_fei4_self_trigger import FEI4SelfTriggerScan
 from scan_hit_delay import HitDelayScan
+from scan_ileak import IleakScan
 from scan_init import InitScan
 from scan_iv import IVScan
 from scan_threshold_fast import FastThresholdScan
