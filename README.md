@@ -46,7 +46,7 @@ Run the **following commands** to install the packages:
   ```
   conda install bitarray cython ipython matplotlib mock nose numpy pandas pyserial pytables pyyaml pyzmq scipy sphinx
   
-  pip install progressbar-latest pyvisa pyvisa-py https://github.com/SiLab-Bonn/pyqtgraph/archive/develop.zip https://github.com/uvemas/ViTables/archive/v2.1.zip
+  pip install progressbar-latest pyvisa pyvisa-py git+https://github.com/pyqtgraph/pyqtgraph.git@develop https://github.com/uvemas/ViTables/archive/v2.1.zip
   ```
 
 On Windows, the `pywin32` package is required:
@@ -59,9 +59,14 @@ On Windows, the `pywin32` package is required:
   pip install basil_daq==2.4.2
   ```
 
-[Pixel Clusterizer](https://github.com/SiLab-Bonn/pixel_clusterizer) (==2.3.0) is required:
+[pyBAR FEI4 Interpreter](https://github.com/SiLab-Bonn/pyBAR_fei4_interpreter) (==1.2.0) is required:
   ```
-  pip install pixel_clusterizer==2.3.0
+  pip install git+https://github.com/SiLab-Bonn/pyBAR_fei4_interpreter@1.2.0
+  ```
+
+[Pixel Clusterizer](https://github.com/SiLab-Bonn/pixel_clusterizer) (==2.5.0) is required:
+  ```
+  pip install pixel_clusterizer==2.5.0
   ```
 
 To enable support for USB devices (MIO, MIO3 and MMC3), the following additional packages are required:
