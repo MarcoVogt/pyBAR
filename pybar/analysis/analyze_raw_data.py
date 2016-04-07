@@ -15,12 +15,15 @@ from scipy.special import erf
 from matplotlib.backends.backend_pdf import PdfPages
 from pixel_clusterizer.clusterizer import HitClusterizer
 
+# pyBAR related imports
+from pybar_fei4_interpreter.data_interpreter import PyDataInterpreter
+from pybar_fei4_interpreter.data_histograming import PyDataHistograming
+from pybar_fei4_interpreter import data_struct
+from pybar_fei4_interpreter import analysis_utils as fast_analysis_utils
+
 from pybar.analysis import analysis_utils
-from pybar.analysis.RawDataConverter import data_struct
 from pybar.analysis.plotting import plotting
-from pybar.analysis.analysis_utils import check_bad_data, fix_raw_data, consecutive, print_raw_data
-from pybar.analysis.RawDataConverter.data_interpreter import PyDataInterpreter
-from pybar.analysis.RawDataConverter.data_histograming import PyDataHistograming
+from pybar.analysis.analysis_utils import check_bad_data, fix_raw_data, consecutive
 
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - [%(levelname)-8s] (%(threadName)-10s) %(message)s")
@@ -82,7 +85,7 @@ class AnalyzeRawData(object):
                 else:
                     raw_data_files.append(one_raw_data_file)
         else:
-            f_list = analysis_utils.get_data_file_names_from_scan_base(raw_data_file, filter_file_words=['analyzed', 'interpreted', 'calibration_calibration', 'result'], parameter=False)
+            f_list = analysis_utils.get_data_file_names_from_scan_base(raw_data_file, sort_by_time=True, meta_data_v2=self.interpreter.meta_table_v2)
             if f_list:
                 raw_data_files = f_list
             elif raw_data_file is not None and os.path.splitext(raw_data_file)[1].strip().lower() != ".h5":
@@ -101,7 +104,8 @@ class AnalyzeRawData(object):
             if isinstance(raw_data_file, basestring):
                 self._analyzed_data_file = os.path.splitext(raw_data_file)[0] + '_interpreted.h5'
             else:
-                raise analysis_utils.IncompleteInputError('Output file name is not given.')
+                self._analyzed_data_file = None
+#                 raise analysis_utils.IncompleteInputError('Output file name is not given.')
 
         # create a scan parameter table from all raw data files
         if raw_data_files is not None:
@@ -206,7 +210,7 @@ class AnalyzeRawData(object):
         '''
         self._setup_clusterizer()
         self.chunk_size = 3000000
-        self.n_injections = 100
+        self.n_injections = None
         self.trig_count = 0  # 0 trig_count = 16 BCID per trigger
         self.max_tot_value = 13
         self.vcal_c0, self.vcal_c1 = None, None
@@ -221,6 +225,7 @@ class AnalyzeRawData(object):
         self.create_empty_event_hits = False
         self.create_meta_event_index = True
         self.create_tot_hist = True
+        self.create_mean_tot_hist = False
         self.create_tot_pixel_hist = True
         self.create_rel_bcid_hist = True
         self.correct_corrupted_data = False
@@ -291,6 +296,15 @@ class AnalyzeRawData(object):
     def create_occupancy_hist(self, value):
         self._create_occupancy_hist = value
         self.histograming.create_occupancy_hist(value)
+
+    @property
+    def create_mean_tot_hist(self):
+        return self._create_mean_tot_hist
+
+    @create_mean_tot_hist.setter
+    def create_mean_tot_hist(self, value):
+        self._create_mean_tot_hist = value
+        self.histograming.create_mean_tot_hist(value)
 
     @property
     def create_source_scan_hist(self):
@@ -616,7 +630,7 @@ class AnalyzeRawData(object):
             if self._create_meta_word_index is True:
                 meta_word_index_table = self.out_file_h5.create_table(self.out_file_h5.root, name='EventMetaData', description=data_struct.MetaInfoWordTable, title='event_meta_data', filters=self._filter_table, chunkshape=(self._chunk_size / 10,))
             if self._create_cluster_table:
-                cluster_table = self.out_file_h5.create_table(self.out_file_h5.root, name='Cluster', description=data_struct.ClusterInfoTable, title='cluster_hit_data', filters=self._filter_table, expectedrows=self._chunk_size)
+                cluster_table = self.out_file_h5.create_table(self.out_file_h5.root, name='Cluster', description=data_struct.ClusterInfoTable, title='Cluster data', filters=self._filter_table, expectedrows=self._chunk_size)
             if self._create_cluster_hit_table:
                 description = data_struct.ClusterHitInfoTable().columns.copy()
                 if self.use_trigger_time_stamp:  # replace the column name if trigger gives you a time stamp
@@ -634,7 +648,7 @@ class AnalyzeRawData(object):
             self.scan_parameter_index = analysis_utils.get_scan_parameters_index(self.scan_parameters)  # a array that labels unique scan parameter combinations
             self.histograming.add_scan_parameter(self.scan_parameter_index)  # just add an index for the different scan parameter combinations
 
-        self.meta_data = analysis_utils.combine_meta_data(self.files_dict)
+        self.meta_data = analysis_utils.combine_meta_data(self.files_dict, meta_data_v2=self.interpreter.meta_table_v2)
 
         if self.meta_data is None or self.meta_data.shape[0] == 0:
             raise analysis_utils.IncompleteInputError('Meta data is empty. Stopping interpretation.')
@@ -672,49 +686,46 @@ class AnalyzeRawData(object):
 
                 # Check for bad data
                 if self._correct_corrupted_data:
-                    last_trigger_raw_data_form_last_chunk = np.array([], dtype=in_file_h5.root.raw_data.dtype)
-                    for read_out_index, (index_start, index_stop) in enumerate(np.column_stack((index_start, index_stop))):
+                    found_first_trigger = False
+                    readout_slices = np.column_stack((index_start, index_stop))
+                    prepend_data_headers = None
+                    for read_out_index, (index_start, index_stop) in enumerate(readout_slices):
                         try:
                             raw_data = in_file_h5.root.raw_data.read(index_start, index_stop)
                         except OverflowError, e:
                             logging.error('%s: 2^31 xrange() limitation in 32-bit Python', e)
 
-                        trigger_positions = np.where(raw_data >= 0x80000000)[0]
-                        if trigger_positions.shape[0] == 0:
-                            last_trigger_position = index_stop
-                        else:
-                            last_trigger_position = trigger_positions[-1]
-
-                        # previous chunk has bad data, look for good data
+                        # previous data chunk had bad data, check for good data
                         if (index_start - 1) in bad_word_index:
-                            if trigger_positions.shape[0] >= 2:
-                                first_trigger_position = trigger_positions[0]
-                                if check_bad_data(raw_data[first_trigger_position:last_trigger_position], trig_count=self.trig_count):
-                                    bad_word_index = bad_word_index.union(range(index_start, index_stop))
-                                else:
-                                    last_trigger_raw_data_form_last_chunk = raw_data[last_trigger_position:]
-                            elif trigger_positions.shape[0] == 1:
-                                if check_bad_data(raw_data[:last_trigger_position], trig_count=self.trig_count) and check_bad_data(raw_data[last_trigger_position:], trig_count=self.trig_count):
-                                    bad_word_index = bad_word_index.union(range(index_start, index_stop))
-                                else:
-                                    last_trigger_raw_data_form_last_chunk = raw_data[last_trigger_position:]
+                            bad_data, prepend_data_headers_tmp = check_bad_data(raw_data, prepend_data_headers=1, trig_count=None)# , trig_count=None)#
+                            if bad_data:
+                                prepend_data_headers = None
+                                bad_word_index = bad_word_index.union(range(index_start, index_stop))
                             else:
-                                if check_bad_data(raw_data, trig_count=self.trig_count):
-                                    bad_word_index = bad_word_index.union(range(index_start, index_stop))
-                            if index_start not in bad_word_index:
                                 logging.info("found good data in %s from index %d to %d (chunk %d, length %d)" % (in_file_h5.filename, index_start, index_stop, read_out_index, (index_stop - index_start)))
-                        # check if chunk has bad data
-                        # check also for single trigger words
-                        elif check_bad_data(np.r_[last_trigger_raw_data_form_last_chunk, raw_data[:last_trigger_position]], trig_count=self.trig_count) or (index_start != 0 and last_trigger_position == 0 and check_bad_data(raw_data[last_trigger_position:], trig_count=self.trig_count)):
-                            logging.warning("found bad data in %s from index %d to %d (chunk %d, length %d)" % (in_file_h5.filename, index_start, index_stop, read_out_index, (index_stop - index_start)))
-                            # last word in chunk before currrent chunk is also bad
-                            if index_start != 0 and (index_start - 1) not in bad_word_index:
-                                bad_word_index.add(index_start - 1)
-                            # adding all word from current chunk
-                            bad_word_index = bad_word_index.union(range(index_start, index_stop))
-                            last_trigger_raw_data_form_last_chunk = np.array([], dtype=in_file_h5.root.raw_data.dtype)
+                        # check for bad data
                         else:
-                            last_trigger_raw_data_form_last_chunk = raw_data[last_trigger_position:]
+                            # first data chunk might have missing trigger in some cases (already fixed in firmware)
+                            if read_out_index == 0:
+                                bad_data, prepend_data_headers_tmp = check_bad_data(raw_data, prepend_data_headers=1, trig_count=None)# , trig_count=None)#
+                            else:
+                                bad_data, prepend_data_headers_tmp = check_bad_data(raw_data, prepend_data_headers=prepend_data_headers, trig_count=self.trig_count)# , trig_count=None)#
+                            # do additional check with follow up data chunk and decide whether current chunk is defect or not
+                            if bad_data:
+                                raw_data_next_chunk = np.r_[raw_data[-1], in_file_h5.root.raw_data.read(*readout_slices[read_out_index])]
+                                fixed_raw_data_next_chunk, lsb_byte = fix_raw_data(raw_data_next_chunk, lsb_byte=None)
+                                raw_data_merged_fixed = np.r_[raw_data[-1], fixed_raw_data_next_chunk]
+                                bad_data, _ = check_bad_data(raw_data, prepend_data_headers=prepend_data_headers, trig_count=None)# , trig_count=None)#
+                            prepend_data_headers = prepend_data_headers_tmp
+                            if bad_data:
+                                prepend_data_headers = None
+                                logging.warning("found bad data in %s from index %d to %d (chunk %d, length %d)" % (in_file_h5.filename, index_start, index_stop, read_out_index, (index_stop - index_start)))
+                                # last word in chunk before currrent chunk is also bad
+                                if index_start != 0 and (index_start - 1) not in bad_word_index:
+                                    bad_word_index.add(index_start - 1)
+                                # adding all word from current chunk
+                                bad_word_index = bad_word_index.union(range(index_start, index_stop))
+
                     consecutive_bad_words_list = consecutive(sorted(bad_word_index))
                     lsb_byte = None
 
@@ -733,9 +744,6 @@ class AnalyzeRawData(object):
                             selected_words = np.intersect1d(consecutive_bad_words, chunk_idx, assume_unique=True)
                             if selected_words.shape[0]:
                                 fixed_raw_data, lsb_byte = fix_raw_data(raw_data[selected_words - word_index - word_shift], lsb_byte=lsb_byte)
-    #                             print "bad data"
-    #                             print_raw_data(raw_data, start_index=selected_words[0] - word_index - 20, index_offset=word_index)
-    #                             print_raw_data(raw_data, start_index=selected_words[-1] - word_index - 20, index_offset=word_index)
                                 raw_data = np.r_[raw_data[:selected_words[0] - word_index - word_shift], fixed_raw_data, raw_data[selected_words[-1] - word_index + 1 - word_shift:]]
                                 if selected_words.shape[0] == consecutive_bad_words.shape[0]:
                                     # full bad data chunk in current chunk
@@ -744,12 +752,10 @@ class AnalyzeRawData(object):
                                     word_shift += 1
                                 else:
                                     break
-    #                             print "good data"
-    #                             print_raw_data(raw_data, start_index=selected_words[0] - word_index - 20, index_offset=word_index)
-    #                             print_raw_data(raw_data, start_index=selected_words[-1] - word_index - 20, index_offset=word_index)
                     self.interpreter.interpret_raw_data(raw_data)  # interpret the raw data
+                    # store remaining buffered event in the interpreter at the end of the last file
                     if file_index == len(self.files_dict.keys()) - 1 and word_index == range(0, in_file_h5.root.raw_data.shape[0], self._chunk_size)[-1]:  # store hits of the latest event of the last file
-                        self.interpreter.store_event()  # all actual buffered events in the interpreter are stored
+                        self.interpreter.store_event()
                     hits = self.interpreter.get_hits()
                     if self.scan_parameters is not None:
                         nEventIndex = self.interpreter.get_n_meta_data_event()
@@ -763,9 +769,9 @@ class AnalyzeRawData(object):
                         if self._create_cluster_table:
                             cluster_table.append(cluster)
                         if self._create_cluster_size_hist:
-                            self._cluster_size_hist += analysis_utils.hist_1d_index(cluster['size'], shape=self._cluster_size_hist.shape)
+                            self._cluster_size_hist += fast_analysis_utils.hist_1d_index(cluster['size'], shape=self._cluster_size_hist.shape)
                         if self._create_cluster_tot_hist:
-                            self._cluster_tot_hist += analysis_utils.hist_2d_index(cluster['tot'][cluster['tot'] < 128], cluster['size'][cluster['tot'] < 128], shape=self._cluster_tot_hist.shape)
+                            self._cluster_tot_hist += fast_analysis_utils.hist_2d_index(cluster['tot'][cluster['tot'] < 128], cluster['size'][cluster['tot'] < 128], shape=self._cluster_tot_hist.shape)
                     if self._analyzed_data_file is not None and self._create_hit_table:
                         hit_table.append(hits)
                     if self._analyzed_data_file is not None and self._create_meta_word_index:
@@ -850,7 +856,7 @@ class AnalyzeRawData(object):
                 tot_hist_table[:] = self.tot_hist
         if self._create_tot_pixel_hist:
             if self._analyzed_data_file is not None and safe_to_file:
-                self.tot_pixel_hist_array = np.swapaxes(self.histograming.get_tot_pixel_hist(), 0, 1)
+                self.tot_pixel_hist_array = np.swapaxes(self.histograming.get_tot_pixel_hist(), 0, 1)  # swap axis col,row, parameter --> row, col, parameter
                 tot_pixel_hist_out = self.out_file_h5.createCArray(self.out_file_h5.root, name='HistTotPixel', title='Tot Pixel Histogram', atom=tb.Atom.from_dtype(self.tot_pixel_hist_array.dtype), shape=self.tot_pixel_hist_array.shape, filters=self._filter_table)
                 tot_pixel_hist_out[:] = self.tot_pixel_hist_array
         if self._create_tdc_hist:
@@ -860,7 +866,7 @@ class AnalyzeRawData(object):
                 tdc_hist_table[:] = self.tdc_hist
         if self._create_tdc_pixel_hist:
             if self._analyzed_data_file is not None and safe_to_file:
-                self.tdc_pixel_hist_array = np.swapaxes(self.histograming.get_tdc_pixel_hist(), 0, 1)
+                self.tdc_pixel_hist_array = np.swapaxes(self.histograming.get_tdc_pixel_hist(), 0, 1)  # swap axis col,row, parameter --> row, col, parameter
                 tdc_pixel_hist_out = self.out_file_h5.createCArray(self.out_file_h5.root, name='HistTdcPixel', title='Tdc Pixel Histogram', atom=tb.Atom.from_dtype(self.tdc_pixel_hist_array.dtype), shape=self.tdc_pixel_hist_array.shape, filters=self._filter_table)
                 tdc_pixel_hist_out[:] = self.tdc_pixel_hist_array
         if self._create_rel_bcid_hist:
@@ -873,14 +879,18 @@ class AnalyzeRawData(object):
                     rel_bcid_hist_table = self.out_file_h5.createCArray(self.out_file_h5.root, name='HistRelBcid', title='relative BCID Histogram in stop mode read out', atom=tb.Atom.from_dtype(self.rel_bcid_hist.dtype), shape=self.rel_bcid_hist.shape, filters=self._filter_table)
                     rel_bcid_hist_table[:] = self.rel_bcid_hist
         if self._create_occupancy_hist:
-            self.occupancy = self.histograming.get_occupancy()
-            self.occupancy_array = np.swapaxes(self.occupancy, 0, 1)
+            self.occupancy_array = np.swapaxes(self.histograming.get_occupancy(), 0, 1)  # swap axis col,row, parameter --> row, col, parameter
             if self._analyzed_data_file is not None and safe_to_file:
-                occupancy_array_table = self.out_file_h5.createCArray(self.out_file_h5.root, name='HistOcc', title='Occupancy Histogram', atom=tb.Atom.from_dtype(self.occupancy.dtype), shape=(336, 80, self.histograming.get_n_parameters()), filters=self._filter_table)
-                occupancy_array_table[0:336, 0:80, 0:self.histograming.get_n_parameters()] = self.occupancy_array  # swap axis col,row,parameter --> row, col,parameter
+                occupancy_array_table = self.out_file_h5.createCArray(self.out_file_h5.root, name='HistOcc', title='Occupancy Histogram', atom=tb.Atom.from_dtype(self.occupancy_array.dtype), shape=self.occupancy_array.shape, filters=self._filter_table)
+                occupancy_array_table[0:336, 0:80, 0:self.histograming.get_n_parameters()] = self.occupancy_array
+        if self._create_mean_tot_hist:
+            self.mean_tot_array = np.swapaxes(self.histograming.get_mean_tot(), 0, 1)  # swap axis col,row, parameter --> row, col, parameter
+            if self._analyzed_data_file is not None and safe_to_file:
+                mean_tot_array_table = self.out_file_h5.createCArray(self.out_file_h5.root, name='HistMeanTot', title='Mean ToT Histogram', atom=tb.Atom.from_dtype(self.mean_tot_array.dtype), shape=self.mean_tot_array.shape, filters=self._filter_table)
+                mean_tot_array_table[0:336, 0:80, 0:self.histograming.get_n_parameters()] = self.mean_tot_array
         if self._create_threshold_hists:
             threshold, noise = np.zeros(80 * 336, dtype=np.float64), np.zeros(80 * 336, dtype=np.float64)
-            self.histograming.calculate_threshold_scan_arrays(threshold, noise, self._n_injection, np.amin(self.scan_parameters['PlsrDAC']), np.amax(self.scan_parameters['PlsrDAC']))  # calling fast algorithm function: M. Mertens, PhD thesis, Juelich 2010, note: noise zero if occupancy was zero
+            self.histograming.calculate_threshold_scan_arrays(threshold, noise, self._n_injection, np.min(self.scan_parameters['PlsrDAC']), np.max(self.scan_parameters['PlsrDAC']))  # calling fast algorithm function: M. Mertens, PhD thesis, Juelich 2010, note: noise zero if occupancy was zero
             threshold_hist, noise_hist = np.reshape(a=threshold.view(), newshape=(80, 336), order='F'), np.reshape(a=noise.view(), newshape=(80, 336), order='F')
             self.threshold_hist, self.noise_hist = np.swapaxes(threshold_hist, 0, 1), np.swapaxes(noise_hist, 0, 1)
             if self._analyzed_data_file is not None and safe_to_file:
@@ -1009,9 +1019,9 @@ class AnalyzeRawData(object):
                 cluster = self.clusterizer.get_cluster()
                 cluster_table.append(cluster)
                 if self._create_cluster_size_hist:
-                    self._cluster_size_hist += analysis_utils.hist_1d_index(cluster['size'], shape=self._cluster_size_hist.shape)
+                    self._cluster_size_hist += fast_analysis_utils.hist_1d_index(cluster['size'], shape=self._cluster_size_hist.shape)
                 if self._create_cluster_tot_hist:
-                    self._cluster_tot_hist += analysis_utils.hist_2d_index(cluster['tot'][cluster['tot'] < 128], cluster['size'][cluster['tot'] < 128], shape=self._cluster_tot_hist.shape)
+                    self._cluster_tot_hist += fast_analysis_utils.hist_2d_index(cluster['tot'][cluster['tot'] < 128], cluster['size'][cluster['tot'] < 128], shape=self._cluster_tot_hist.shape)
 
             progress_bar.update(index)
 
@@ -1137,7 +1147,7 @@ class AnalyzeRawData(object):
             plotting.plot_three_way(hist=noise_hist_calib, title='Noise (S-curve fit, masked %i pixel(s))' % mask_cnt, x_axis_title="Noise [e]", filename=output_pdf, bins=100, minimum=0)
         if self._create_occupancy_hist:
             if self._create_fitted_threshold_hists:
-                plotting.plot_scurves(occupancy_hist=out_file_h5.root.HistOcc[:] if out_file_h5 is not None else self.occupancy_array[:], filename=output_pdf, scan_parameters=np.linspace(np.amin(self.scan_parameters['PlsrDAC']), np.amax(self.scan_parameters['PlsrDAC']), num=self.histograming.get_n_parameters(), endpoint=True))
+                plotting.plot_scurves(occupancy_hist=out_file_h5.root.HistOcc[:] if out_file_h5 is not None else self.occupancy_array[:], filename=output_pdf, scan_parameters=np.linspace(np.amin(self.scan_parameters['PlsrDAC']), np.amax(self.scan_parameters['PlsrDAC']), num=self.histograming.get_n_parameters(), endpoint=True), scan_parameter_name="PlsrDAC")
             else:
                 hist = np.sum(out_file_h5.root.HistOcc[:], axis=2) if out_file_h5 is not None else np.sum(self.occupancy_array[:], axis=2)
                 occupancy_array_masked = np.ma.masked_equal(hist, 0)
@@ -1241,8 +1251,7 @@ class AnalyzeRawData(object):
             self.c_low = float(c_low)
             self.c_mid = float(c_mid)
             self.c_high = float(c_high)
-            repeat_command = opened_raw_data_file.root.configuration.run_conf[:][np.where(opened_raw_data_file.root.configuration.run_conf[:]['name'] == 'repeat_command')]['value'][0]
-            self.n_injections = int(repeat_command)
+            self.n_injections = int(opened_raw_data_file.root.configuration.run_conf[:][np.where(opened_raw_data_file.root.configuration.run_conf[:]['name'] == 'n_injections')]['value'][0])
         except tb.exceptions.NoSuchNodeError:
             if not self._settings_from_file_set:
                 logging.warning('No settings stored in raw data file %s, use standard settings', opened_raw_data_file.filename)
