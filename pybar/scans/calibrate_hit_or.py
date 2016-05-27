@@ -112,7 +112,7 @@ def create_hitor_calibration(output_filename, plot_pixel_calibrations=False):
                 calibration_data_out.flush()
 #                 with PdfPages(output_filename + "_calibration.pdf") as output_pdf:
                 plot_scurves(calibration_data[:, :, :, 0], inner_loop_parameter_values, "ToT calibration", "ToT", 15, "Charge [PlsrDAC]", filename=analyze_raw_data.output_pdf)
-                plot_scurves(calibration_data[:, :, :, 1], inner_loop_parameter_values, "TDC calibration", "TDC [ns]", None, "Charge [PlsrDAC]", y_scale=1000.0 / 640.0, filename=analyze_raw_data.output_pdf)
+                plot_scurves(calibration_data[:, :, :, 1], inner_loop_parameter_values, "TDC calibration", "TDC [ns]", None, "Charge [PlsrDAC]", filename=analyze_raw_data.output_pdf)
                 tot_mean_all_pix = np.nanmean(calibration_data[:, :, :, 0], axis=(0, 1))
                 tot_error_all_pix = np.nanstd(calibration_data[:, :, :, 0], axis=(0, 1))
                 tdc_mean_all_pix = np.nanmean(calibration_data[:, :, :, 1], axis=(0, 1))
@@ -204,6 +204,7 @@ class HitOrCalibration(Fei4RunBase):
             self.register_utils.send_commands(commands)
 
             self.dut['TDC']['ENABLE'] = True
+            self.dut['TDC']['EN_NO_WRITE_TRIG_ERR'] = False  # Do not trigger TDC words
             for scan_parameter_value in scan_parameter_values:
                 if self.stop_run.is_set():
                     break
@@ -223,7 +224,7 @@ class HitOrCalibration(Fei4RunBase):
             self.dut['TDC']['ENABLE'] = False
 
     def handle_data(self, data):
-        self.raw_data_file.append_item(data, scan_parameters=self.scan_parameters._asdict(), new_file=['column'], flush=False)  # Create new file for each scan parameter change
+        self.raw_data_file.append_item(data, scan_parameters=self.scan_parameters._asdict(), new_file=['column'], flush=True)  # Create new file for each scan parameter change
 
     def analyze(self):
         create_hitor_calibration(self.output_filename, plot_pixel_calibrations=True)

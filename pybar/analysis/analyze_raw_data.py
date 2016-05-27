@@ -1,21 +1,23 @@
 ''' Script to convert the raw data and to plot all histograms'''
 from __future__ import division
 
-import tables as tb
-from tables import dtype_from_descr, Col
-import numpy as np
 import logging
-import progressbar
 import warnings
 import os
 import multiprocessing as mp
 from functools import partial
+
+import tables as tb
+from tables import dtype_from_descr, Col
+import numpy as np
 from scipy.optimize import curve_fit, OptimizeWarning
 from scipy.special import erf
 from matplotlib.backends.backend_pdf import PdfPages
+
+import progressbar
+
 from pixel_clusterizer.clusterizer import HitClusterizer
 
-# pyBAR related imports
 from pybar_fei4_interpreter.data_interpreter import PyDataInterpreter
 from pybar_fei4_interpreter.data_histograming import PyDataHistograming
 from pybar_fei4_interpreter import data_struct
@@ -735,6 +737,9 @@ class AnalyzeRawData(object):
                         raw_data = in_file_h5.root.raw_data.read(word_index, word_index + self._chunk_size)
                     except OverflowError, e:
                         logging.error('%s: 2^31 xrange() limitation in 32-bit Python', e)
+                    except tb.exceptions.HDF5ExtError:
+                        logging.warning('Raw data file %s has missing raw data. Continue raw data analysis.', in_file_h5.filename)
+                        break
                     total_words += raw_data.shape[0]
                     # fix bad data
                     if self._correct_corrupted_data:
