@@ -20,7 +20,7 @@ class TdacTuning(Fei4RunBase):
     '''
     _default_run_conf = {
         "scan_parameters": [('TDAC', None)],
-        "target_threshold": 50,
+        "target_threshold": 30,
         "tdac_tune_bits": range(4, -1, -1),
         "n_injections_tdac": 100,
         "plot_intermediate_steps": False,
@@ -71,8 +71,8 @@ class TdacTuning(Fei4RunBase):
         self.occupancy_best = np.empty(shape=(80, 336))  # array to store the best occupancy (closest to Ninjections/2) of the pixel
         self.occupancy_best.fill(self.n_injections_tdac)
         self.tdac_mask_best = self.register.get_pixel_register_value("TDAC")
-
-        for scan_parameter_value, tdac_bit in enumerate(self.tdac_tune_bits):
+        tdac_tune_bits = self.tdac_tune_bits[:]
+        for scan_parameter_value, tdac_bit in enumerate(tdac_tune_bits):
             if additional_scan:
                 self.set_tdac_bit(tdac_bit)
                 logging.info('TDAC setting: bit %d = 1', tdac_bit)
@@ -117,7 +117,7 @@ class TdacTuning(Fei4RunBase):
                 if additional_scan:  # scan bit = 0 with the correct value again
                     additional_scan = False
                     lastBitResult = occupancy_array.copy()
-                    self.tdac_tune_bits.append(0)  # bit 0 has to be scanned twice
+                    tdac_tune_bits.append(0)  # bit 0 has to be scanned twice
                 else:
                     tdac_mask[abs(occupancy_array - self.n_injections_tdac / 2) > abs(lastBitResult - self.n_injections_tdac / 2)] = tdac_mask[abs(occupancy_array - self.n_injections_tdac / 2) > abs(lastBitResult - self.n_injections_tdac / 2)] | (1 << tdac_bit)
                     occupancy_array[abs(occupancy_array - self.n_injections_tdac / 2) > abs(lastBitResult - self.n_injections_tdac / 2)] = lastBitResult[abs(occupancy_array - self.n_injections_tdac / 2) > abs(lastBitResult - self.n_injections_tdac / 2)]
@@ -139,6 +139,7 @@ class TdacTuning(Fei4RunBase):
 #         plot_three_way(hist=self.register.get_pixel_register_value("TDAC").transpose(), title="TDAC check distribution after tuning", x_axis_title="TDAC", filename=plots_filename, maximum = 32)
 
     def analyze(self):
+        # set here because original value is restored after scan()
         self.register.set_pixel_register_value("TDAC", self.tdac_mask_best)
 
         plot_three_way(hist=self.occupancy_best.transpose(), title="Occupancy after TDAC tuning", x_axis_title="Occupancy", filename=self.plots_filename, maximum=self.n_injections_tdac)
