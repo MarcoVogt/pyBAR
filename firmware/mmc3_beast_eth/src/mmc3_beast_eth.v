@@ -4,7 +4,6 @@ module mmc3_m26_eth(
     input wire RESET_N,
     input wire clkin,
     
-    
     output wire [3:0] rgmii_txd,
     output wire rgmii_tx_ctl,
     output wire rgmii_txc,
@@ -19,22 +18,12 @@ module mmc3_m26_eth(
     
     output wire CMD_CLK_P, CMD_CLK_N,
     output wire CMD_DATA_P, CMD_DATA_N,
-    input wire RJ45_HITOR_N, RJ45_HITOR_P,
-    input wire DOBOUT_N, DOBOUT_P,
-    
-    input wire [5:0] M26_CLK_P, M26_CLK_N, M26_MKD_P, M26_MKD_N,
-    input wire [5:0] M26_DATA1_P, M26_DATA1_N, M26_DATA0_P, M26_DATA0_N,
-    
-    output wire M26_TCK_P,M26_TCK_N,
-    output wire M26_TMS_P,M26_TMS_N,
-    output wire M26_TDI_P,M26_TDI_N,
-    input wire M26_TDO_P,M26_TDO_N,
-    
+    input wire [4:0] RJ45_HITOR_N, RJ45_HITOR_P,
+    input wire [4:0] DOBOUT_N, DOBOUT_P,
     
     output wire RJ45_BUSY_LEMO_TX1, RJ45_CLK_LEMO_TX0, 
     input wire RJ45_TRIGGER, RJ45_RESET,
     input wire [1:0] LEMO_RX
-
 );
 
 
@@ -335,73 +324,14 @@ localparam CMD_HIGHADDR = 32'h8000-1;
 localparam TLU_BASEADDR = 32'h8200;
 localparam TLU_HIGHADDR = 32'h8300-1;
 
-localparam RX_BASEADDR = 32'h8600;
-localparam RX_HIGHADDR = 32'h8700-1;
+localparam RX_BASEADDR = 32'h9000;
+localparam RX_HIGHADDR = 32'h9100-1;
 
-localparam TDC_BASEADDR = 32'h8700;
-localparam TDC_HIGHADDR = 32'h8800-1;
+localparam TDC_BASEADDR = 32'ha000;
+localparam TDC_HIGHADDR = 32'ha100-1;
 
-localparam GPIO_BASEADDR = 32'hb000;
-localparam GPIO_HIGHADDR = 32'hb01f;
 
-    
 // -------  USER MODULES  ------- //
-///////////////////// M26 JTAG
-wire M26_TCK, M26_TMS,M26_TDI,M26_TDO,M26_TMS_INV,M26_TDI_INV, M26_TDO_INV;
-wire M26_RESETB;
-OBUFDS #(
-  .IOSTANDARD("LVDS_25"),
-  .SLEW("SLOW") 
-) OBUFDS_inst_m26_tck (
-  .O(M26_TCK_P),
-  .OB(M26_TCK_N), 
-  .I(M26_TCK)    
-);
-OBUFDS #(
-  .IOSTANDARD("LVDS_25"),
-  .SLEW("SLOW") 
-) OBUFDS_inst_m26_tms (
-  .O(M26_TMS_P),
-  .OB(M26_TMS_N), 
-  .I(M26_TMS)    
-);
-OBUFDS #(
-  .IOSTANDARD("LVDS_25"),
-  .SLEW("SLOW") 
-) OBUFDS_inst_m26_tdi (
-  .O(M26_TDI_P),
-  .OB(M26_TDI_N), 
-  .I(M26_TDI)    
-);
-IBUFDS #(
-    .DIFF_TERM("TRUE"), 
-    .IBUF_LOW_PWR("FALSE"), 
-    .IOSTANDARD("LVDS_25") 
-) IBUFDS_inst_m26_tdo (
-    .O(M26_TDO), 
-    .I(M26_TDO_P),  
-    .IB(M26_TDO_N)
-);
-assign M26_TMS= ~M26_TMS_INV;
-assign M26_TDI= ~M26_TDI_INV;
-assign M26_TDO_INV = ~M26_TDO;
-
-gpio #(
-    .BASEADDR(GPIO_BASEADDR),
-    .HIGHADDR(GPIO_HIGHADDR),
-    .ABUSWIDTH(32),
-    .IO_WIDTH(8),
-    .IO_DIRECTION(8'hef)
-) i_gpio_jtag (
-    .BUS_CLK(BUS_CLK),
-    .BUS_RST(BUS_RST),
-    .BUS_ADD(BUS_ADD),
-    .BUS_DATA(BUS_DATA),
-    .BUS_RD(BUS_RD),
-    .BUS_WR(BUS_WR),
-    .IO({LED[5:3],M26_TDO,M26_TDI_INV,M26_TMS_INV,M26_TCK,M26_RESETB})
-);
-
 wire CMD_DATA, CMD_CLK;
 
 wire TRIGGER_ENABLE; // from CMD FSM
@@ -467,7 +397,7 @@ wire TRIGGER_FIFO_EMPTY;
 wire [31:0] TRIGGER_FIFO_DATA;
 wire TRIGGER_FIFO_PEEMPT_REQ;
 wire [31:0] TIMESTAMP;
-wire TDC_OUT;
+wire [4:0] TDC_OUT;
 
 tlu_controller #(
     .BASEADDR(TLU_BASEADDR),
@@ -490,7 +420,7 @@ tlu_controller #(
     
     .FIFO_PREEMPT_REQ(TRIGGER_FIFO_PEEMPT_REQ),
     
-    .TRIGGER({7'b0, TDC_OUT}),
+    .TRIGGER({4'b0, TDC_OUT}),
     .TRIGGER_VETO({7'b0, FIFO_FULL}),
     
     .EXT_TRIGGER_ENABLE(EXT_TRIGGER_ENABLE),
@@ -509,188 +439,121 @@ reg [31:0] timestamp_gray;
 always@(posedge BUS_CLK) 
     timestamp_gray <=  (TIMESTAMP>>1) ^ TIMESTAMP;
 
-wire DOBOUT;
-wire RX_READY, RX_8B10B_DECODER_ERR, RX_FIFO_OVERFLOW_ERR, RX_FIFO_FULL;
-wire FE_FIFO_READ;
-wire FE_FIFO_EMPTY;
-wire [31:0] FE_FIFO_DATA;
+
+wire [4:0] RX_READY, RX_8B10B_DECODER_ERR, RX_FIFO_OVERFLOW_ERR, RX_FIFO_FULL;
+wire [4:0] FE_FIFO_READ;
+wire [4:0] FE_FIFO_EMPTY;
+wire [31:0] FE_FIFO_DATA [4:0];
     
-fei4_rx #(
-    .BASEADDR(RX_BASEADDR),
-    .HIGHADDR(RX_HIGHADDR),
-    .DSIZE(10),
-    .DATA_IDENTIFIER(1),
-    .ABUSWIDTH(32)
-) i_fei4_rx (
-    .RX_CLK(CLK160),
-    .RX_CLK2X(CLK320),
-    .DATA_CLK(CLK16),
+wire [4:0]TDC_FIFO_READ;
+wire [4:0] TDC_FIFO_EMPTY;
+wire [31:0] TDC_FIFO_DATA [4:0];
 
-    .RX_DATA(DOBOUT),
-
-    .RX_READY(RX_READY),
-    .RX_8B10B_DECODER_ERR(RX_8B10B_DECODER_ERR),
-    .RX_FIFO_OVERFLOW_ERR(RX_FIFO_OVERFLOW_ERR),
-
-    .FIFO_READ(FE_FIFO_READ),
-    .FIFO_EMPTY(FE_FIFO_EMPTY),
-    .FIFO_DATA(FE_FIFO_DATA),
-
-    .RX_FIFO_FULL(RX_FIFO_FULL),
-
-    .BUS_CLK(BUS_CLK),
-    .BUS_RST(BUS_RST),
-    .BUS_ADD(BUS_ADD),
-    .BUS_DATA(BUS_DATA),
-    .BUS_RD(BUS_RD),
-    .BUS_WR(BUS_WR)
-);
-        
-IBUFDS #(
-    .DIFF_TERM("TRUE"), 
-    .IBUF_LOW_PWR("FALSE"), 
-    .IOSTANDARD("LVDS_25") 
-) IBUFDS_inst_i (
-    .O(DOBOUT), 
-    .I(DOBOUT_P),  
-    .IB(DOBOUT_N)
-);
-
-
-wire [5:0] M26_CLK;
-wire [5:0] M26_CLK_BUFG;
-wire [5:0] M26_MKD;
-wire [5:0] M26_DATA0;
-wire [5:0] M26_DATA0_RX;
-wire [5:0] M26_DATA1;
-wire [5:0] M26_DATA1_RX;
-
-assign M26_DATA0 = ~M26_DATA0_RX;
-assign M26_DATA1 = M26_DATA1_RX;
-
-wire [5:0] LOST_ERROR;
-wire [5:0] FIFO_READ_M26_RX;
-wire [5:0] FIFO_EMPTY_M26_RX;
-wire [31:0] FIFO_DATA_M26_RX [5:0];
-     
-genvar ch;
+genvar i;
 generate
-    for (ch = 0; ch < 6; ch = ch + 1) begin: m26_gen
+  for (i = 0; i < 5; i = i + 1) begin: rx_gen
+    wire DOBOUT;
+    fei4_rx #(
+        .BASEADDR(RX_BASEADDR+32'h0100*i),
+        .HIGHADDR(RX_HIGHADDR+32'h0100*i),
+        .DSIZE(10),
+        .DATA_IDENTIFIER(i+1),
+        .ABUSWIDTH(32)
+    ) i_fei4_rx (
+        .RX_CLK(CLK160),
+        .RX_CLK2X(CLK320),
+        .DATA_CLK(CLK16),
 
-        IBUFDS #(
-            .DIFF_TERM("TRUE"), 
-            .IBUF_LOW_PWR("FALSE"), 
-            .IOSTANDARD("LVDS_25") 
-        ) IBUFDS_inst_M26_CLK(
-            .O(M26_CLK[ch]), 
-            .I(M26_CLK_P[ch]),  
-            .IB(M26_CLK_N[ch])
-        );
-             
-        IBUFDS #(
-            .DIFF_TERM("TRUE"), 
-            .IBUF_LOW_PWR("FALSE"), 
-            .IOSTANDARD("LVDS_25") 
-        ) IBUFDS_inst_M26_MKD(
-            .O(M26_MKD[ch]), 
-            .I(M26_MKD_P[ch]),  
-            .IB(M26_MKD_N[ch])
-        );
+        .RX_DATA(DOBOUT),
 
-        IBUFDS #(
-            .DIFF_TERM("TRUE"), 
-            .IBUF_LOW_PWR("FALSE"), 
-            .IOSTANDARD("LVDS_25") 
-        ) IBUFDS_inst_M26_DATA0(
-            .O(M26_DATA0_RX[ch]), 
-            .I(M26_DATA0_P[ch]),  
-            .IB(M26_DATA0_N[ch])
-        );
-        
-        IBUFDS #(
-            .DIFF_TERM("TRUE"), 
-            .IBUF_LOW_PWR("FALSE"), 
-            .IOSTANDARD("LVDS_25") 
-        ) IBUFDS_inst_M26_DATA1(
-            .O(M26_DATA1_RX[ch]),
-            .I(M26_DATA1_P[ch]),  
-            .IB(M26_DATA1_N[ch])
-        );   
+        .RX_READY(RX_READY[i]),
+        .RX_8B10B_DECODER_ERR(RX_8B10B_DECODER_ERR[i]),
+        .RX_FIFO_OVERFLOW_ERR(RX_FIFO_OVERFLOW_ERR[i]),
 
+        .FIFO_READ(FE_FIFO_READ[i]),
+        .FIFO_EMPTY(FE_FIFO_EMPTY[i]),
+        .FIFO_DATA(FE_FIFO_DATA[i]),
 
-       
-end   
-endgenerate     
+        .RX_FIFO_FULL(RX_FIFO_FULL[i]),
 
-assign FIFO_EMPTY_M26_RX = 6'hff;
-
-
-wire TDC_FIFO_READ;
-wire TDC_FIFO_EMPTY;
-wire [31:0] TDC_FIFO_DATA;
-wire [31:0] TIMESTAMP;
-wire LEMO_TRIGGER_FROM_TDC;
-wire TDC_IN_FROM_TDC;
-wire RJ45_HITOR;
-
-IBUFDS #(
-    .DIFF_TERM("TRUE"), 
-    .IBUF_LOW_PWR("FALSE"), 
-    .IOSTANDARD("LVDS_25") 
-) IBUFDS_inst_RJ45_HITOR (
-    .O(RJ45_HITOR), 
-    .I(RJ45_HITOR_P),  
-    .IB(RJ45_HITOR_N)
-);
-
+        .BUS_CLK(BUS_CLK),
+        .BUS_RST(BUS_RST),
+        .BUS_ADD(BUS_ADD),
+        .BUS_DATA(BUS_DATA),
+        .BUS_RD(BUS_RD),
+        .BUS_WR(BUS_WR)
+    );
+            
+    IBUFDS #(
+        .DIFF_TERM("TRUE"), 
+        .IBUF_LOW_PWR("FALSE"), 
+        .IOSTANDARD("LVDS_25") 
+    ) IBUFDS_inst_i (
+        .O(DOBOUT), 
+        .I(DOBOUT_P[i]),  
+        .IB(DOBOUT_N[i])
+    );
  
-tdc_s3 #(
-    .BASEADDR(TDC_BASEADDR),
-    .HIGHADDR(TDC_HIGHADDR),
-    .ABUSWIDTH(32),
-    .CLKDV(4),
-    .DATA_IDENTIFIER(4'b0100), // one-hot
-    .FAST_TDC(1),
-    .FAST_TRIGGER(0)
-) i_tdc (
-    .CLK320(CLK320),
-    .CLK160(CLK160),
-    .DV_CLK(CLK40),
-    .TDC_IN(RJ45_HITOR),
-    .TDC_OUT(TDC_OUT),
-    .TRIG_IN(),
-    .TRIG_OUT(),
+    wire RJ45_HITOR;
+    tdc_s3 #(
+        .BASEADDR(TDC_BASEADDR+32'h0100*i),
+        .HIGHADDR(TDC_HIGHADDR+32'h0100*i),
+        .ABUSWIDTH(32),
+        .CLKDV(4),
+        .DATA_IDENTIFIER(4'b0100 + i), // one-hot
+        .FAST_TDC(1),
+        .FAST_TRIGGER(0)
+    ) i_tdc (
+        .CLK320(CLK320),
+        .CLK160(CLK160),
+        .DV_CLK(CLK40),
+        .TDC_IN(RJ45_HITOR),
+        .TDC_OUT(TDC_OUT[i]),
+        .TRIG_IN(),
+        .TRIG_OUT(),
 
-    .FIFO_READ(TDC_FIFO_READ),
-    .FIFO_EMPTY(TDC_FIFO_EMPTY),
-    .FIFO_DATA(TDC_FIFO_DATA),
+        .FIFO_READ(TDC_FIFO_READ[i]),
+        .FIFO_EMPTY(TDC_FIFO_EMPTY[i]),
+        .FIFO_DATA(TDC_FIFO_DATA[i]),
 
-    .BUS_CLK(BUS_CLK),
-    .BUS_RST(BUS_RST),
-    .BUS_ADD(BUS_ADD),
-    .BUS_DATA(BUS_DATA),
-    .BUS_RD(BUS_RD),
-    .BUS_WR(BUS_WR),
+        .BUS_CLK(BUS_CLK),
+        .BUS_RST(BUS_RST),
+        .BUS_ADD(BUS_ADD),
+        .BUS_DATA(BUS_DATA),
+        .BUS_RD(BUS_RD),
+        .BUS_WR(BUS_WR),
 
-    .ARM_TDC(CMD_START_FLAG), // arm TDC by sending commands
-    .EXT_EN(1'b0),
+        .ARM_TDC(CMD_START_FLAG), // arm TDC by sending commands
+        .EXT_EN(1'b0),
+        
+        .TIMESTAMP(TIMESTAMP[15:0])
+    );
     
-    .TIMESTAMP(TIMESTAMP[15:0])
-);
+    IBUFDS #(
+        .DIFF_TERM("TRUE"), 
+        .IBUF_LOW_PWR("FALSE"), 
+        .IOSTANDARD("LVDS_25") 
+    ) IBUFDS_inst_RJ45_HITOR (
+        .O(RJ45_HITOR), 
+        .I(RJ45_HITOR_P[i]),  
+        .IB(RJ45_HITOR_N[i])
+    );
+  end
+endgenerate
 
 wire ARB_READY_OUT, ARB_WRITE_OUT;
 wire [31:0] ARB_DATA_OUT;
-wire [8:0] READ_GRANT;
+wire [10:0] READ_GRANT;
 
 rrp_arbiter #(
-    .WIDTH(9)
+    .WIDTH(11)
 ) i_rrp_arbiter (
     .RST(BUS_RST),
     .CLK(BUS_CLK),
 
-    .WRITE_REQ({~TDC_FIFO_EMPTY, ~FIFO_EMPTY_M26_RX, ~FE_FIFO_EMPTY, ~TRIGGER_FIFO_EMPTY}),
-    .HOLD_REQ({8'b0, TRIGGER_FIFO_PEEMPT_REQ }),
-    .DATA_IN({TDC_FIFO_DATA, FIFO_DATA_M26_RX[5], FIFO_DATA_M26_RX[4], FIFO_DATA_M26_RX[3], FIFO_DATA_M26_RX[2], FIFO_DATA_M26_RX[1], FIFO_DATA_M26_RX[0], FE_FIFO_DATA, TRIGGER_FIFO_DATA}),
+    .WRITE_REQ({~TDC_FIFO_EMPTY, ~FE_FIFO_EMPTY, ~TRIGGER_FIFO_EMPTY}),
+    .HOLD_REQ({10'b0, TRIGGER_FIFO_PEEMPT_REQ }),
+    .DATA_IN({TDC_FIFO_DATA[4], TDC_FIFO_DATA[3], TDC_FIFO_DATA[2], TDC_FIFO_DATA[1], TDC_FIFO_DATA[0], FE_FIFO_DATA[4], FE_FIFO_DATA[3], FE_FIFO_DATA[2], FE_FIFO_DATA[1], FE_FIFO_DATA[0], TRIGGER_FIFO_DATA}),
     .READ_GRANT(READ_GRANT),
 
     .READY_OUT(ARB_READY_OUT),
@@ -699,9 +562,8 @@ rrp_arbiter #(
 );
 
 assign TRIGGER_FIFO_READ = READ_GRANT[0];
-assign FE_FIFO_READ = READ_GRANT[1];
-assign FIFO_READ_M26_RX = READ_GRANT[7:2];
-assign TDC_FIFO_READ = READ_GRANT[8];
+assign FE_FIFO_READ = READ_GRANT[5:1];
+assign TDC_FIFO_READ = READ_GRANT[10:6];
 
 //cdc_fifo is for timing reasons
 wire [31:0] cdc_data_out;
@@ -742,9 +604,9 @@ clock_divider #(
     .CLOCK(CLK_1HZ)
 );
 
-assign LED[7:6] = 2'hf;
+assign LED[7:3] = 5'hf;
 assign LED[0] = RX_READY;
-assign LED[1] = ~(|LOST_ERROR & CLK_1HZ);
+assign LED[1] = ~(CLK_1HZ);
 assign LED[2] = ~(|RX_8B10B_DECODER_ERR & CLK_1HZ);
 
 //ila_0 ila(

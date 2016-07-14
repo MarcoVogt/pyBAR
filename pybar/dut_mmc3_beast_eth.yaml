@@ -26,7 +26,27 @@ hw_drivers:
   - name      : CH0
     type      : fei4_rx
     interface : ETH
-    base_addr : 0x8600
+    base_addr : 0x9000
+
+  - name      : CH1
+    type      : fei4_rx
+    interface : ETH
+    base_addr : 0x9100
+
+  - name      : CH2
+    type      : fei4_rx
+    interface : ETH
+    base_addr : 0x9200
+
+  - name      : CH3
+    type      : fei4_rx
+    interface : ETH
+    base_addr : 0x9300
+
+  - name      : CH4
+    type      : fei4_rx
+    interface : ETH
+    base_addr : 0x9400
     
   - name      : SRAM
     type      : sram_fifo
@@ -37,7 +57,27 @@ hw_drivers:
   - name      : TDC
     type      : tdc_s3
     interface : ETH
-    base_addr : 0x8700
+    base_addr : 0xa000
+    
+  - name      : TDC1
+    type      : tdc_s3
+    interface : ETH
+    base_addr : 0xa100
+    
+  - name      : TDC2
+    type      : tdc_s3
+    interface : ETH
+    base_addr : 0xa200
+
+  - name      : TDC3
+    type      : tdc_s3
+    interface : ETH
+    base_addr : 0xa300
+
+  - name      : TDC4
+    type      : tdc_s3
+    interface : ETH
+    base_addr : 0xa400    
 
   - name      : TLU
     type      : tlu
