@@ -115,8 +115,8 @@ set_property BITSTREAM.CONFIG.UNUSEDPIN PULLUP [current_design]
 #set_property IOSTANDARD LVDS_25 [get_ports RJ45_HITOR*]
 
 #PORT1
-#set_property PACKAGE_PIN C19 [get_ports RJ45_HITOR_P[0]]
-#set_property PACKAGE_PIN B19 [get_ports RJ45_HITOR_N[0]]
+#set_property PACKAGE_PIN C14 [get_ports RJ45_HITOR_P[0]]
+#set_property PACKAGE_PIN C13 [get_ports RJ45_HITOR_N[0]]
 #set_property IOSTANDARD LVDS_25 [get_ports RJ45_HITOR*]
 #set_property PACKAGE_PIN G12 [get_ports RJ45_HITOR_P[2]]
 #set_property PACKAGE_PIN F12 [get_ports RJ45_HITOR_N[2]]
